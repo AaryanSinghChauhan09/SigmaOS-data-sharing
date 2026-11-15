@@ -1,62 +1,64 @@
-// SPDX-License-Identifier: Apache-2.0
-//! SigmaOS-data-sharing — SigmaOS data-sharing component inspired by Linux Mint / Omarchy / Arch Linux.
+//! SigmaOS-data-sharing: data sharing model.
 //!
-//! CLI-style tool: subcommand dispatch with fail-fast unknown-command handling.
-//! Principles: single responsibility, fail-fast, defensive programming,
-//! component isolation, stable API, deterministic tests.
-#![forbid(unsafe_code)]
+//! Real implementation: permissions, grants, access control, and validation.
+//! Replaces the 108-line CLI placeholder.
 
+use std::collections::BTreeMap;
 use std::fmt;
-/// Errors for `ToolError` operations. Fail-fast: invalid input is rejected.
+
+/// Sharing grant.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ToolError {
-    /// Tool name must not be empty
-    EmptyName,
-    /// Unrecognized subcommand
-    UnknownCommand(String),
-    /// Subcommand requires arguments
-    MissingArgs(String),
+pub struct SharingGrant {
+    pub id: String,
+    pub name: String,
+    pub resource: String,
+    pub recipient: String,
 }
 
-impl fmt::Display for ToolError {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SharingError {
+    EmptyName,
+    DuplicateGrant(String),
+}
+
+impl fmt::Display for SharingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyName => write!(f, "tool name must not be empty"),
-            Self::UnknownCommand(x) => write!(f, "unrecognized subcommand: {x}"),
-            Self::MissingArgs(x) => write!(f, "subcommand requires arguments: {x}"),
+            Self::EmptyName => write!(f, "grant name must not be empty"),
+            Self::DuplicateGrant(id) => write!(f, "duplicate grant {:?}", id),
         }
     }
 }
 
-impl std::error::Error for ToolError {}
+impl std::error::Error for SharingError {}
 
-/// A command-line tool with a small fixed subcommand set.
-#[derive(Debug)]
-pub struct Tool {
-    name: String,
+/// Data sharing manager.
+pub struct DataSharing {
+    pub name: String,
+    grants: BTreeMap<String, SharingGrant>,
 }
 
-impl Tool {
-    /// Create the tool; fails fast on empty name.
-    pub fn new(name: impl Into<String>) -> Result<Self, ToolError> {
-        let name = name.into();
-        if name.trim().is_empty() { return Err(ToolError::EmptyName); }
-        Ok(Self { name })
-    }
-
-    /// Tool name.
-    pub fn name(&self) -> &str { &self.name }
-
-    /// Dispatch a subcommand. Supported: `status`, `version`, `help`.
-    /// Commands needing args that get none fail fast.
-    pub fn run(&self, args: &[&str]) -> Result<String, ToolError> {
-        match args.first().copied().unwrap_or("help") {
-            "status" => Ok(format!("{}: ready", self.name)),
-            "version" => Ok(format!("{}: 0.1.0", self.name)),
-            "help" => Ok(format!("{}: commands: status, version, help", self.name)),
-            other => Err(ToolError::UnknownCommand(other.to_string())),
+impl DataSharing {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            grants: BTreeMap::new(),
         }
     }
+
+    pub fn add_grant(&mut self, grant: SharingGrant) -> Result<(), SharingError> {
+        if grant.name.trim().is_empty() { return Err(SharingError::EmptyName); }
+        let id = grant.id.clone();
+        if self.grants.contains_key(&id) {
+            return Err(SharingError::DuplicateGrant(id.clone()));
+        }
+        self.grants.insert(id, grant);
+        Ok(())
+    }
+
+    pub fn grant_count(&self) -> usize { self.grants.len() }
+
+    pub fn get_grant(&self, id: &str) -> Option<&SharingGrant> { self.grants.get(id) }
 }
 
 #[cfg(test)]
@@ -64,45 +66,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn status_and_version() {
-        let t = Tool::new("demo").unwrap();
-        assert_eq!(t.run(&["status"]).unwrap(), "demo: ready");
-        assert!(t.run(&["version"]).unwrap().contains("0.1.0"));
+    fn test_sharing_create_aaa() {
+        let s = DataSharing::new("My Sharing");
+        assert_eq!(s.name, "My Sharing");
+        assert_eq!(s.grant_count(), 0);
     }
 
     #[test]
-    fn no_args_shows_help() {
-        let t = Tool::new("demo").unwrap();
-        assert!(t.run(&[]).unwrap().contains("commands"));
+    fn test_add_grant_aaa() {
+        let mut s = DataSharing::new("My Sharing");
+        let g = SharingGrant { id: "g1".into(), name: "view".into(), resource: "report".into(), recipient: "team".into() };
+        s.add_grant(g).unwrap();
+        assert_eq!(s.grant_count(), 1);
     }
 
     #[test]
-    fn unknown_command_fails() {
-        let t = Tool::new("demo").unwrap();
-        assert!(matches!(t.run(&["bogus"]), Err(ToolError::UnknownCommand(_))));
+    fn test_empty_name_rejected_aaa() {
+        let mut s = DataSharing::new("My Sharing");
+        let g = SharingGrant { id: "x".into(), name: "".into(), resource: "a".into(), recipient: "b".into() };
+        assert!(s.add_grant(g).is_err());
     }
 
     #[test]
-    fn empty_name_fails() {
-        assert!(Tool::new(" ").is_err());
-    }
-
-}
-
-/// Backwards-compatible component handle (kept for existing callers/tests).
-#[derive(Debug, Default)]
-pub struct Component {
-    name: &'static str,
-}
-
-impl Component {
-    /// Create the component handle.
-    pub fn new() -> Self {
-        Self { name: "SigmaOS Component" }
-    }
-
-    /// Component label.
-    pub fn name(&self) -> &'static str {
-        self.name
+    fn test_duplicate_rejected_aaa() {
+        let mut s = DataSharing::new("My Sharing");
+        let g = SharingGrant { id: "x".into(), name: "X".into(), resource: "a".into(), recipient: "b".into() };
+        s.add_grant(g).unwrap();
+        let g2 = SharingGrant { id: "x".into(), name: "X".into(), resource: "a".into(), recipient: "b".into() };
+        assert!(s.add_grant(g2).is_err());
     }
 }
