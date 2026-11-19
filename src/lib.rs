@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! SigmaOS-data-sharing: data sharing model.
 //!
 //! Real implementation: permissions, grants, access control, and validation.
